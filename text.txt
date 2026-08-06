@@ -1,5 +1,110 @@
-# text
+all the episode ans season endpoint in the movie command file now return reponse like dis fix them 
 
-[2026-07-22 09:33 UTC]
-When I was talking about it
-I actually meant push our bot files from server to GitHub tho
+{
+  "status": 200,
+  "success": true,
+  "creator": "DaraTech",
+  "title": "Adarsh Baal Vidyalaya",
+  "seasons": [
+    {
+      "season": 1,
+      "title": "Season 1",
+      "episodes": [
+        {
+          "episode": 1,
+          "globalEpisode": 101,
+          "title": "Gawaar Goldy",
+          "description": "Headmaster Gyaneshwar Tripathi can travel to the UK if his Class 10 students pass their board exams, but they rarely come to school. Idealistic newcomer Kanchan tries to reform the resistant system.",
+          "thumbnail": "https://static.tvmaze.com/uploads/images/original_untouched/634/1587008.jpg",
+          "duration": 37,
+          "resourceId": "2508177459850505048"
+        },
+        {
+          "episode": 2,
+          "globalEpisode": 102,
+          "title": "Adarsh ka Adarsh",
+          "description": "Gyaneshwar seeks an ideal role model for unmotivated students while Kanchan investigates a confiscated watch that has gone missing.",
+          "thumbnail": "https://static.tvmaze.com/uploads/images/original_untouched/634/1587010.jpg",
+          "duration": 33,
+          "resourceId": "8339182840818591224"
+        },
+        {
+          "episode": 3,
+          "globalEpisode": 103,
+          "title": "Guru Dakshina",
+          "description": "Gyaneshwar, facing budget constraints, must decide between purchasing a water filter requested by teachers or keeping funds for the students' favorite kheer dessert.",
+          "thumbnail": "https://static.tvmaze.com/uploads/images/original_untouched/634/1587011.jpg",
+          "duration": 34,
+          "resourceId": "6726894174219953664"
+        },
+        {
+          "episode": 4,
+          "globalEpisode": 104,
+          "title": "Laadli Bitiya",
+          "description": "A spelling mistake gives Purva's award to Purav, triggering a gender protest that Mukul must resolve. Gyaneshwar pursues funding while Kanchan and Hansraj attempt to prevent a student's wedding.",
+          "thumbnail": "https://static.tvmaze.com/uploads/images/original_untouched/634/1587012.jpg",
+          "duration": 32,
+          "resourceId": "533318786678669760"
+        },
+        {
+          "episode": 5,
+          "globalEpisode": 105,
+          "title": "Baal Suraksha",
+          "description": "Under Urmila's pressure, Gyaneshwar teaches fake history to influence votes, triggering chaos in class. Meanwhile, Kanchan pushes for Ramesh Kaka's retirement.",
+          "thumbnail": "https://static.tvmaze.com/uploads/images/original_untouched/634/1587013.jpg",
+          "duration": 33,
+          "resourceId": "7739078190471572312"
+        },
+        {
+          "episode": 6,
+          "globalEpisode": 106,
+          "title": "Aandhi mein Deepak",
+          "description": "As Gyaneshwar's UK plan gets revealed to the staff, alumnus Deepak's Olympic gold suddenly puts the school under an unforgiving media spotlight.",
+          "thumbnail": "https://static.tvmaze.com/uploads/images/original_untouched/634/1587015.jpg",
+          "duration": 37,
+          "resourceId": "9072143680173131184"
+        },
+        {
+          "episode": 7,
+          "globalEpisode": 107,
+          "title": "Agni Pariksha",
+          "description": "To boost results, Gyaneshwar considers withholding hall tickets of the weak students, risking their future for his dream. Meanwhile, Kanchan refuses to give up on them.",
+          "thumbnail": "https://static.tvmaze.com/uploads/images/original_untouched/634/1587016.jpg",
+          "duration": 42,
+          "resourceId": "7847164581528464216"
+        }
+      ]
+    }
+  ],
+  "totalEpisodes": 7
+}
+
+
+so they should appear like dis 
+
+$tv episodes <id> — doEpisodes
+📺 Adarsh Baal Vidyalaya
+📊 1 Season · 7 Episodes
+━━━ Season 1 (7 episodes) ━━━
+  E101. Gawaar Goldy · 37min
+  E102. Adarsh ka Adarsh · 33min
+  E103. Guru Dakshina · 34min
+  ...
+💡 $tv dl <id> s<season>e<episode> — download
+$tv dl <id> — showSeasonPicker (when season not specified)
+📺 Title
+📊 2 Seasons · 14 Total Episodes
+1️⃣  Season 1  —  7 episodes
+2️⃣  Season 2  —  7 episodes
+💬 Pick a season:
+$tv dl <id> s1 — Season 1 episodes
+$tv dl <id> s1 — showEpisodePicker (season selected, episode not)
+📺 Title — Season 1
+📋 7 Episodes
+1️⃣  Gawaar Goldy  (E101 · 37min)
+    _Headmaster Gyaneshwar Tripathi can travel to the UK..._
+2️⃣  Adarsh ka Adarsh  (E102 · 33min)
+    _Gyaneshwar seeks an ideal role model..._
+...
+
+its not only for tv ohh
