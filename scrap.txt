@@ -1,0 +1,306 @@
+# scrap
+
+[2026-08-08 14:54 UTC]
+const express = require('express');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const cors = require('cors');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Note: Streaming sites frequently change domain extensions. 
+// If it stops working, check if the domain has changed to .moe, .cafe, .vip, etc.
+const BASE_URL = 'https://anichin.site'; 
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Helper function for HTTP requests
+const fetchHTML = async (url) => {
+  const { data } = await axios.get(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Referer': BASE_URL
+    },
+    timeout: 10000
+  });
+  return cheerio.load(data);
+};
+
+// ==========================================
+// 1. LATEST RELEASES
+// ==========================================
+app.get('/api/latest', async (req, res) => {
+  try {
+    const page = req.query.page || 1;
+    const url = page > 1 ? `${BASE_URL}/page/${page}/` : BASE_URL;
+    const $ = await fetchHTML(url);
+    const items = [];
+
+    $('.post-show .animposx, .listupd .bsx').each((_, el) => {
+      const $el = $(el);
+      const title = $el.find('.title, .tt').text().trim();
+      const link = $el.find('a').attr('href');
+      const slug = link ? link.split('/').filter(Boolean).pop() : null;
+      const image = $el.find('img').attr('src') || $el.find('img').attr('data-src');
+      const episode = $el.find('.epx, .bt .ep').text().trim();
+      const type = $el.find('.typez').text().trim() || 'Donghua';
+
+      if (title && slug) {
+        items.push({ title, slug, episode, image, type, link });
+      }
+    });
+
+    res.json({ status: true, page: Number(page), results: items });
+  } catch (error) {
+    res.status(500).json({ status: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 2. SEARCH DONGHUA
+// ==========================================
+app.get('/api/search', async (req, res) => {
+  try {
+    const query = req.query.q;
+    if (!query) {
+      return res.status(400).json({ status: false, message: 'Query parameter "q" is required.' });
+    }
+
+    const $ = await fetchHTML(`${BASE_URL}/?s=${encodeURIComponent(query)}`);
+    const results = [];
+
+    $('.listupd .bsx, .bs .bsx').each((_, el) => {
+      const $el = $(el);
+      const title = $el.find('.tt').text().trim();
+      const link = $el.find('a').attr('href');
+      const slug = link ? link.split('/').filter(Boolean).pop() : null;
+      const image = $el.find('img').attr('src') || $el.find('img').attr('data-src');
+      const status = $el.find('.sb').text().trim();
+      const type = $el.find('.typez').text().trim();
+
+      if (title && slug) {
+        results.push({ title, slug, status, type, image, link });
+      }
+    });
+
+    res.json({ status: true, query, total: results.length, results });
+  } catch (error) {
+    res.status(500).json({ status: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 3. DONGHUA DETAIL & EPISODES
+// ==========================================
+app.get('/api/detail/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const $ = await fetchHTML(`${BASE_URL}/anime/${slug}/`);
+
+    const title = $('.entry-title, .title-title').text().trim();
+    const image = $('.thumb img').attr('src');
+    const synopsis = $('.entry-content p, .desc').text().trim();
+    
+    const metadata = {};
+    $('.spe span').each((_, el) => {
+      const text = $(el).text();
+      if (text.includes(':')) {
+        const [key, ...val] = text.split(':');
+        metadata[key.trim().toLowerCase()] = val.join(':').trim();
+      }
+    });
+
+    const genres = [];
+    $('.genx a, .mgen a').each((_, el) => {
+      genres.push($(el).text().trim());
+    });
+
+    const episodes = [];
+    $('.eplister ul li').each((_, el) => {
+      const $el = $(el);
+      const epNum = $el.find('.epl-num').text().trim();
+      const epTitle = $el.find('.epl-title').text().trim();
+      const epDate = $el.find('.epl-date').text().trim();
+      const epLink = $el.find('a').attr('href');
+      const epSlug = epLink ? epLink.split('/').filter(Boolean).pop() : null;
+
+      episodes.push({ episode: epNum, title: epTitle, date: epDate, slug: epSlug, link: epLink });
+    });
+
+    res.json({
+      status: true,
+      data: { title, slug, image, synopsis, genres, metadata, episodes }
+    });
+  } catch (error) {
+    res.status(500).json({ status: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 4. VIDEO STREAM LINKS
+// ==========================================
+app.get('/api/stream/:episodeSlug', async (req, res) => {
+  try {
+    const { episodeSlug } = req.params;
+    const $ = await fetchHTML(`${BASE_URL}/${episodeSlug}/`);
+
+    const title = $('.entry-title').text().trim();
+    const streamServers = [];
+    const defaultEmbed = $('#embed_holder iframe, .player-embed iframe').attr('src');
+
+    $('#selectserver option, .mirror option').each((_, el) => {
+      const serverName = $(el).text().trim();
+      const value = $(el).attr('value');
+      if (value) {
+        streamServers.push({ server: serverName, value });
+      }
+    });
+
+    res.json({
+      status: true,
+      episodeSlug,
+      title,
+      defaultStreamUrl: defaultEmbed ? (defaultEmbed.startsWith('//') ? `https:${defaultEmbed}` : defaultEmbed) : null,
+      alternativeServers: streamServers
+    });
+  } catch (error) {
+    res.status(500).json({ status: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 5. GENRES LIST
+// ==========================================
+app.get('/api/genres', async (req, res) => {
+  try {
+    const $ = await fetchHTML(`${BASE_URL}/genres/`);
+    const genres = [];
+
+    $('.taxindex ul li a, .genre-list a').each((_, el) => {
+      const name = $(el).text().trim();
+      const link = $(el).attr('href');
+      const slug = link ? link.split('/').filter(Boolean).pop() : null;
+      if (name && slug) {
+        genres.push({ name, slug });
+      }
+    });
+
+    res.json({ status: true, total: genres.length, genres });
+  } catch (error) {
+    res.status(500).json({ status: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 6. ONGOING / COMPLETED STATUS
+// ==========================================
+app.get('/api/status/:status', async (req, res) => {
+  try {
+    const { status } = req.params;
+    const page = req.query.page || 1;
+    
+    if (!['ongoing', 'completed'].includes(status.toLowerCase())) {
+      return res.status(400).json({ status: false, message: 'Invalid status. Use "ongoing" or "completed".' });
+    }
+
+    const url = page > 1 ? `${BASE_URL}/${status}/page/${page}/` : `${BASE_URL}/${status}/`;
+    const $ = await fetchHTML(url);
+    const items = [];
+
+    $('.post-show .animposx, .listupd .bsx').each((_, el) => {
+      const $el = $(el);
+      const title = $el.find('.title, .tt').text().trim();
+      const link = $el.find('a').attr('href');
+      const slug = link ? link.split('/').filter(Boolean).pop() : null;
+      const image = $el.find('img').attr('src') || $el.find('img').attr('data-src');
+      const episode = $el.find('.epx, .bt .ep').text().trim();
+      const type = $el.find('.typez').text().trim();
+
+      if (title && slug) {
+        items.push({ title, slug, episode, image, type, link });
+      }
+    });
+
+    res.json({ status: true, filter: status, page: Number(page), results: items });
+  } catch (error) {
+    res.status(500).json({ status: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 7. WEEKLY SCHEDULE
+// ==========================================
+app.get('/api/schedule', async (req, res) => {
+  try {
+    const $ = await fetchHTML(`${BASE_URL}/jadwal/`);
+    const schedule = {};
+
+    $('.bixbox').each((_, el) => {
+      const day = $(el).find('.releases h3, .bxcl h2').text().trim();
+      if (!day) return;
+
+      const items = [];
+      $(el).find('.listupd .bsx, .animposx').each((_, itemEl) => {
+        const $item = $(itemEl);
+        const title = $item.find('.title, .tt').text().trim();
+        const link = $item.find('a').attr('href');
+        const slug = link ? link.split('/').filter(Boolean).pop() : null;
+        const episode = $item.find('.epx, .bt .ep').text().trim();
+
+        if (title && slug) {
+          items.push({ title, slug, episode, link });
+        }
+      });
+
+      schedule[day.toLowerCase()] = items;
+    });
+
+    res.json({ status: true, data: schedule });
+  } catch (error) {
+    res.status(500).json({ status: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 8. A-Z LIST
+// ==========================================
+app.get('/api/az-list', async (req, res) => {
+  try {
+    const $ = await fetchHTML(`${BASE_URL}/a-z-list/`);
+    const azList = [];
+
+    $('.letter-section, .lista').each((_, section) => {
+      const letter = $(section).find('.letter-title, .baris-title').text().trim();
+      const items = [];
+
+      $(section).find('ul li a, .penz a').each((_, el) => {
+        const title = $(el).text().trim();
+        const link = $(el).attr('href');
+        const slug = link ? link.split('/').filter(Boolean).pop() : null;
+
+        if (title && slug) {
+          items.push({ title, slug, link });
+        }
+      });
+
+      if (letter || items.length > 0) {
+        azList.push({ letter, items });
+      }
+    });
+
+    res.json({ status: true, totalLetters: azList.length, data: azList });
+  } catch (error) {
+    res.status(500).json({ status: false, error: error.message });
+  }
+});
+
+// ==========================================
+// START SERVER
+// ==========================================
+app.listen(PORT, () => {
+  console.log(`Server listening at http://localhost:${PORT}`);
+});
