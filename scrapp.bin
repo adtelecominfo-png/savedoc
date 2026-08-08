@@ -1,0 +1,406 @@
+const express = require("express");
+const axios = require("axios");
+const cheerio = require("cheerio");
+const cors = require("cors");
+
+const app = express();
+const PORT = Number(process.env.PORT || 3000);
+const BASE_URL = (process.env.ANICHIN_BASE_URL || "https://anichin.moe").replace(
+  /\/+$/,
+  "",
+);
+const REQUEST_TIMEOUT = 15000;
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+app.use(cors());
+app.use(express.json());
+
+function absoluteUrl(value) {
+  if (!value) return undefined;
+
+  try {
+    return new URL(value, `${BASE_URL}/`).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function slugFromUrl(value) {
+  if (!value) return undefined;
+
+  try {
+    return new URL(value, `${BASE_URL}/`)
+      .pathname.split("/")
+      .filter(Boolean)
+      .pop();
+  } catch {
+    return value.split("/").filter(Boolean).pop();
+  }
+}
+
+async function fetchHTML(path) {
+  const response = await axios.get(new URL(path, `${BASE_URL}/`).toString(), {
+    timeout: REQUEST_TIMEOUT,
+    responseType: "text",
+    headers: {
+      "User-Agent": USER_AGENT,
+      Referer: `${BASE_URL}/`,
+      Accept: "text/html,application/xhtml+xml",
+    },
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Upstream returned HTTP ${response.status}`);
+  }
+
+  return cheerio.load(response.data);
+}
+
+function getImage($, element) {
+  const image = $(element).find("img").first();
+  return absoluteUrl(
+    image.attr("data-src") ||
+      image.attr("data-lazy-src") ||
+      image.attr("data-original") ||
+      image.attr("src"),
+  );
+}
+
+function cardFrom($, element) {
+  const card = $(element);
+  const link = absoluteUrl(card.find("a").first().attr("href"));
+  const title =
+    card.find("a").first().attr("title") ||
+    card.find(".tt h2, .title h2, .tt, .title").first().text().trim();
+  const slug = slugFromUrl(link);
+
+  if (!title || !link || !slug) return null;
+
+  return {
+    title: title.trim(),
+    slug,
+    episode:
+      card.find(".epx, .bt .ep").first().text().trim() || undefined,
+    status: card.find(".sb").first().text().trim() || undefined,
+    type: card.find(".typez").first().text().trim() || "Donghua",
+    image: getImage($, element),
+    link,
+  };
+}
+
+function cardsFrom($) {
+  const results = [];
+  const seen = new Set();
+
+  $(".post-show .animposx, .listupd .bsx, .bs .bsx").each((_, element) => {
+    const card = cardFrom($, element);
+    if (card && !seen.has(card.slug)) {
+      seen.add(card.slug);
+      results.push(card);
+    }
+  });
+
+  return results;
+}
+
+function getPageNumber(value) {
+  const page = Number(value || 1);
+  if (!Number.isInteger(page) || page < 1 || page > 100) {
+    const error = new Error("Page must be an integer between 1 and 100.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return page;
+}
+
+function sendError(res, error) {
+  const statusCode = error.statusCode || 502;
+  const message = error.message || "Upstream request failed.";
+
+  res.status(statusCode).json({
+    status: false,
+    ...(statusCode === 400 ? { message } : { error: message }),
+  });
+}
+
+// 1. Latest releases
+app.get("/api/latest", async (req, res) => {
+  try {
+    const page = getPageNumber(req.query.page);
+    const $ = await fetchHTML(page > 1 ? `/anime/page/${page}/` : "/anime/");
+
+    res.json({
+      status: true,
+      page,
+      results: cardsFrom($),
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// 2. Search donghua
+app.get("/api/search", async (req, res) => {
+  try {
+    const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+
+    if (!query) {
+      return res.status(400).json({
+        status: false,
+        message: 'Query parameter "q" is required.',
+      });
+    }
+
+    if (query.length > 100) {
+      return res.status(400).json({
+        status: false,
+        message: "Query is too long.",
+      });
+    }
+
+    const $ = await fetchHTML(`/?s=${encodeURIComponent(query)}`);
+    const results = cardsFrom($);
+
+    res.json({
+      status: true,
+      query,
+      total: results.length,
+      results,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// 3. Donghua detail and episodes
+app.get("/api/detail/:slug", async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    const $ = await fetchHTML(`/${encodeURIComponent(slug)}/`);
+    const title = $(".entry-title, .title-title").first().text().trim();
+    const metadata = {};
+    const genres = $(".genx a, .mgen a, .genxed a")
+      .map((_, element) => $(element).text().trim())
+      .get()
+      .filter(Boolean);
+    const episodes = [];
+
+    $(".spe span").each((_, element) => {
+      const text = $(element).text().trim();
+      const separator = text.indexOf(":");
+
+      if (separator > 0) {
+        metadata[text.slice(0, separator).trim().toLowerCase()] = text
+          .slice(separator + 1)
+          .trim();
+      }
+    });
+
+    $(".eplister ul li").each((_, element) => {
+      const row = $(element);
+      const link = absoluteUrl(row.find("a").first().attr("href"));
+
+      episodes.push({
+        episode: row.find(".epl-num").first().text().trim(),
+        title: row.find(".epl-title").first().text().trim(),
+        date: row.find(".epl-date").first().text().trim(),
+        slug: slugFromUrl(link),
+        link,
+      });
+    });
+
+    res.json({
+      status: true,
+      data: {
+        title: title || slug,
+        slug,
+        image: absoluteUrl($(".thumb img").first().attr("src")),
+        synopsis:
+          $(".entry-content p, .desc").first().text().trim() || undefined,
+        genres,
+        metadata,
+        episodes,
+      },
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// 4. Video stream links
+app.get("/api/stream/:episodeSlug", async (req, res) => {
+  try {
+    const episodeSlug = req.params.episodeSlug;
+    const $ = await fetchHTML(`/${encodeURIComponent(episodeSlug)}/`);
+    const embed = absoluteUrl(
+      $("#embed_holder iframe, .player-embed iframe, iframe[src]")
+        .first()
+        .attr("src"),
+    );
+    const alternativeServers = [];
+
+    $("#selectserver option, .mirror option").each((_, element) => {
+      const value = $(element).attr("value");
+      if (value) {
+        alternativeServers.push({
+          server: $(element).text().trim() || "Server",
+          value,
+        });
+      }
+    });
+
+    res.json({
+      status: true,
+      episodeSlug,
+      title: $(".entry-title").first().text().trim() || episodeSlug,
+      defaultStreamUrl: embed || null,
+      alternativeServers,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// 5. Genres
+app.get("/api/genres", async (_req, res) => {
+  try {
+    const $ = await fetchHTML("/genres/");
+    const genres = [];
+    const seen = new Set();
+
+    $(".taxindex li a, .genre-list a").each((_, element) => {
+      const name =
+        $(element).find(".name").first().text().trim() ||
+        $(element).text().trim();
+      const link = absoluteUrl($(element).attr("href"));
+      const slug = slugFromUrl(link);
+
+      if (name && slug && !seen.has(slug)) {
+        seen.add(slug);
+        genres.push({ name, slug });
+      }
+    });
+
+    res.json({
+      status: true,
+      total: genres.length,
+      genres,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// 6. Ongoing or completed series
+app.get("/api/status/:status", async (req, res) => {
+  try {
+    const status = req.params.status.toLowerCase();
+    if (status !== "ongoing" && status !== "completed") {
+      return res.status(400).json({
+        status: false,
+        message: 'Invalid status. Use "ongoing" or "completed".',
+      });
+    }
+
+    const page = getPageNumber(req.query.page);
+    const params = new URLSearchParams({
+      status,
+      type: "",
+      order: "update",
+    });
+
+    if (page > 1) params.set("page", String(page));
+
+    const $ = await fetchHTML(`/anime/?${params.toString()}`);
+
+    res.json({
+      status: true,
+      filter: status,
+      page,
+      results: cardsFrom($),
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// 7. Weekly schedule
+app.get("/api/schedule", async (_req, res) => {
+  try {
+    const $ = await fetchHTML("/");
+    const schedule = {};
+
+    $(".listSchh").each((_, section) => {
+      const day = $(section).find("h2").first().text().trim();
+      if (!day) return;
+
+      const items = [];
+      $(section)
+        .find(".subSchh a")
+        .each((__, element) => {
+          const link = absoluteUrl($(element).attr("href"));
+          const title = $(element).text().trim();
+          const slug = slugFromUrl(link);
+
+          if (title && link && slug) {
+            items.push({
+              title,
+              slug,
+              link,
+              type: "Donghua",
+            });
+          }
+        });
+
+      schedule[day.toLowerCase()] = items;
+    });
+
+    res.json({ status: true, data: schedule });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// 8. A-Z list
+app.get("/api/az-list", async (_req, res) => {
+  try {
+    const letters = [".", "0-9", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+    const pages = await Promise.all(
+      letters.map(async (letter) => ({
+        letter,
+        $: await fetchHTML(`/az-lists/?show=${encodeURIComponent(letter)}`),
+      })),
+    );
+
+    const data = pages.map(({ letter, $ }) => ({
+      letter,
+      items: cardsFrom($).map(({ title, slug, link }) => ({
+        title,
+        slug,
+        link,
+      })),
+    }));
+
+    res.json({
+      status: true,
+      totalLetters: data.length,
+      data,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/", (_req, res) => {
+  res.json({
+    status: true,
+    message: "Anichin API is running.",
+    baseUrl: BASE_URL,
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Anichin API listening on http://localhost:${PORT}`);
+});
