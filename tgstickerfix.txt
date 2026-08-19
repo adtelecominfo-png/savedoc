@@ -1,0 +1,218 @@
+# tgstickerfix
+
+[2026-08-19 12:46 UTC]
+register({
+  name: 'tgsticker',
+  aliases: ['tgstickers', 'tgs', 'teles'],
+  category: 'TOOLS',
+  description: 'Download stickers from Telegram sticker packs',
+  async execute({ sock, from, args, prefix, command }) {
+    if (!args[0]) {
+      return await sock.sendMessage(from, { 
+        text: `🖼️ *Telegram Sticker Downloader*\n\nUsage: ${prefix}${command} <url>\nExample: ${prefix}${command} https://t.me/addstickers/StickerPackName\n\n*Supports:*\n• t.me/addstickers/... (sticker packs)\n• t.me/sticker/... (individual stickers)\n\n*Note:* Sends up to 10 stickers, all tagged as one pack — WhatsApp will offer "Add sticker pack" once a few arrive.` 
+      });
+    }
+
+    const url = args[0];
+
+    // Check if it's a Telegram sticker link
+    if (!url.includes('t.me/addstickers') && !url.includes('t.me/sticker')) {
+      return await sock.sendMessage(from, { 
+        text: `❌ Invalid URL. Please provide a Telegram sticker link.\nExample: https://t.me/addstickers/StickerPackName` 
+      });
+    }
+
+    // ==========================================================
+    // 🛑 REPLACE THIS WITH YOUR TELEGRAM BOT TOKEN
+    // Get token from @BotFather on Telegram
+    // ==========================================================
+    const BOT_TOKEN = '';
+    // ==========================================================
+
+    if (BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN_HERE') {
+      return await sock.sendMessage(from, { 
+        text: `❌ Bot token not configured. Please set your token in the command.` 
+      });
+    }
+
+    // Extract pack name from URL
+    let packName = '';
+    if (url.includes('t.me/addstickers/')) {
+      packName = url.split('t.me/addstickers/')[1].split('?')[0].split('#')[0];
+    } else if (url.includes('t.me/sticker')) {
+      const match = url.match(/t\.me\/sticker\/([^\s?]+)/);
+      if (match) packName = match[1];
+    }
+
+    if (!packName) {
+      return await sock.sendMessage(from, { 
+        text: `❌ Could not extract sticker pack name from URL.` 
+      });
+    }
+
+    await sock.sendMessage(from, { text: `⏳ Fetching sticker pack: *${packName}*...` });
+
+    try {
+      // Use Telegram Bot API to get sticker set
+      const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getStickerSet?name=${encodeURIComponent(packName)}`;
+      const response = await fetch(apiUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.ok) {
+        throw new Error(data.description || 'Sticker pack not found.');
+      }
+
+      const stickerSet = data.result;
+      const stickers = stickerSet.stickers || [];
+      const packTitle = stickerSet.title || packName;
+
+      if (stickers.length === 0) {
+        return await sock.sendMessage(from, { 
+          text: `❌ No stickers found in this pack.` 
+        });
+      }
+
+      const maxStickers = Math.min(stickers.length, 10);
+
+      await sock.sendMessage(from, { 
+        text: `🖼️ *${packTitle}*\n📊 *Total:* ${stickers.length} stickers\n📤 *Sending:* ${maxStickers} stickers\n\n⬇️ Downloading...` 
+      });
+
+      let sentCount = 0;
+
+      for (let i = 0; i < maxStickers; i++) {
+        try {
+          const sticker = stickers[i];
+          const fileId = sticker.file_id;
+
+          // Get file path from Telegram
+          const fileRes = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`,
+            {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              }
+            }
+          );
+
+          if (!fileRes.ok) continue;
+
+          const fileData = await fileRes.json();
+
+          if (!fileData.ok) continue;
+
+          const filePath = fileData.result?.file_path;
+          if (!filePath) continue;
+
+          // Download the sticker file
+          const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+          const stickerRes = await fetch(fileUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+          });
+
+          if (!stickerRes.ok) continue;
+
+          const stickerBuffer = Buffer.from(await stickerRes.arrayBuffer());
+
+          if (stickerBuffer.length < 100) continue;
+
+          // Wrap every sticker with the SAME pack/author metadata so WhatsApp
+          // recognizes them as one pack and offers "Add sticker pack" to the
+          // recipient, instead of sending disconnected individual stickers.
+          // No caption — real sticker packs don't caption each tile.
+          const wrapped = new Sticker(stickerBuffer, {
+            pack: packTitle,
+            author: BOT_NAME,
+            type: StickerTypes.FULL,
+            quality: 70,
+          });
+          const finalSticker = await wrapped.toBuffer();
+
+          await sock.sendMessage(from, { sticker: finalSticker });
+
+          sentCount++;
+          await new Promise(r => setTimeout(r, 300));
+
+        } catch (stickerErr) {
+          console.warn(`Sticker ${i+1} error:`, stickerErr.message);
+        }
+      }
+
+      if (sentCount === 0) {
+        await sock.sendMessage(from, { 
+          text: `❌ Failed to download any stickers.\n\n💡 The sticker pack may be private or unavailable.` 
+        });
+      } else {
+        await sock.sendMessage(from, { 
+          text: `✅ Downloaded and sent *${sentCount}*/${maxStickers} stickers from *${packTitle}*` 
+        });
+      }
+
+    } catch (error) {
+      console.error('Telegram sticker error:', error);
+
+      // Fallback: Try alternative method
+      try {
+        const fallbackUrl = `https://t.me/addstickers/${packName}`;
+        const fallbackRes = await fetch(fallbackUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+
+        if (fallbackRes.ok) {
+          const html = await fallbackRes.text();
+          const urlMatches = html.match(/https?:\/\/[^\s"']+\.(webp|png|jpg)/gi) || [];
+          const uniqueImages = [...new Set(urlMatches)];
+
+          if (uniqueImages.length > 0) {
+            const maxFallback = Math.min(uniqueImages.length, 5);
+            let fallbackCount = 0;
+            for (let i = 0; i < maxFallback; i++) {
+              try {
+                const imgUrl = uniqueImages[i];
+                const imgRes = await fetch(imgUrl);
+                if (imgRes.ok) {
+                  const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+                  if (imgBuf.length > 1000) {
+                    const wrapped = new Sticker(imgBuf, {
+                      pack: packName,
+                      author: BOT_NAME,
+                      type: StickerTypes.FULL,
+                      quality: 70,
+                    });
+                    await sock.sendMessage(from, { sticker: await wrapped.toBuffer() });
+                    fallbackCount++;
+                    await new Promise(r => setTimeout(r, 400));
+                  }
+                }
+              } catch (imgErr) {}
+            }
+            if (fallbackCount > 0) {
+              return await sock.sendMessage(from, { 
+                text: `✅ Downloaded *${fallbackCount}* images (fallback method).` 
+              });
+            }
+          }
+        }
+      } catch (fallbackErr) {
+        console.warn('Fallback failed:', fallbackErr.message);
+      }
+
+      await sock.sendMessage(from, { 
+        text: `⚠️ Download Error: ${error.message || 'Could not fetch stickers.'}\n\n💡 Make sure the sticker pack exists and is public.` 
+      });
+    }
+  }
+});
